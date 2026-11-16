@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video → Phụ đề → Lồng tiếng Việt</title>
+<style>
+  :root { --bg:#fff; --fg:#1d1d1f; --card:#f5f5f7; --line:#d8d8dc; --accent:#2f6fed; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#18181b; --fg:#f2f2f3; --card:#242428; --line:#3a3a40; --accent:#6d9bff; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui,sans-serif; }
+  main { max-width:960px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:22px; margin:0 0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:9px 16px; font-size:14px; cursor:pointer; }
+  button:disabled { opacity:.45; cursor:default; }
+  button.sec { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  select, input[type=file] { font-size:14px; }
+  textarea { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px; font:inherit; resize:vertical; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .seg { display:grid; grid-template-columns:90px 1fr 1fr; gap:8px; margin-bottom:8px; align-items:start; }
+  .time { font-size:12px; opacity:.7; padding-top:8px; }
+  .status { font-size:13px; opacity:.8; margin-left:4px; }
+  video, audio { width:100%; margin-top:8px; border-radius:8px; }
+  @media (max-width:640px) { .seg { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Video → Phụ đề → Lồng tiếng Việt</h1>
+
+  <div class="card">
+    <b>1. Chọn video & tách phụ đề</b>
+    <div class="row" style="margin-top:10px">
+      <input type="file" id="file" accept="video/*,audio/*">
+      <button id="bTrans">Tạo phụ đề</button>
+      <span class="status" id="s1"></span>
+    </div>
+    <video id="vid" controls hidden></video>
+  </div>
+
+  <div class="card">
+    <b>2. Phụ đề (có thể sửa trực tiếp)</b>
+    <div class="row" style="margin:10px 0">
+      <button id="bTr" disabled>Dịch sang tiếng Việt</button>
+      <button id="bSrt" class="sec" disabled>Tải .srt tiếng Việt</button>
+      <span class="status" id="s2"></span>
+    </div>
+    <div id="segs"></div>
+  </div>
+
+  <div class="card">
+    <b>3. Tạo giọng nói tiếng Việt</b>
+    <div class="row" style="margin-top:10px">
+      <select id="voice">
+        <option value="vi-VN-HoaiMyNeural">Giọng nữ (Hoài My)</option>
+        <option value="vi-VN-NamMinhNeural">Giọng nam (Nam Minh)</option>
+      </select>
+      <button id="bTts" disabled>Tạo lồng tiếng</button>
+      <span class="status" id="s3"></span>
+    </div>
+    <audio id="aud" controls hidden></audio>
+    <video id="dub" controls hidden></video>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let job = null, segs = [];
+
+async function post(url, body, isForm) {
+  const r = await fetch(url, { method: "POST", body: isForm ? body : JSON.stringify(body),
+    headers: isForm ? {} : { "Content-Type": "application/json" } });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function render() {
+  $("segs").innerHTML = "";
+  segs.forEach((s, i) => {
+    const d = document.createElement("div");
+    d.className = "seg";
+    d.innerHTML = `<div class="time">${s.start}s → ${s.end}s</div>
+      <textarea rows="2"></textarea><textarea rows="2" placeholder="Bản dịch tiếng Việt"></textarea>`;
+    const [a, b] = d.querySelectorAll("textarea");
+    a.value = s.text; b.value = s.vi;
+    a.oninput = () => s.text = a.value;
+    b.oninput = () => s.vi = b.value;
+    $("segs").appendChild(d);
+  });
+}
+
+$("bTrans").onclick = async () => {
+  const f = $("file").files[0];
+  if (!f) return alert("Hãy chọn một file video trước.");
+  $("bTrans").disabled = true; $("s1").textContent = "Đang nhận dạng giọng nói (có thể mất vài phút)...";
+  try {
+    const fd = new FormData(); fd.append("file", f);
+    const r = await post("/api/transcribe", fd, true);
+    job = r.job; segs = r.segments;
+    $("vid").src = URL.createObjectURL(f); $("vid").hidden = false;
+    $("s1").textContent = `Xong. Ngôn ngữ gốc: ${r.language}, ${segs.length} đoạn.`;
+    $("bTr").disabled = false; render();
+  } catch (e) { $("s1").textContent = "Lỗi: " + e.message; }
+  $("bTrans").disabled = false;
+};
+
+$("bTr").onclick = async () => {
+  $("bTr").disabled = true; $("s2").textContent = "Đang dịch...";
+  try {
+    const r = await post("/api/translate", { segments: segs });
+    segs = r.segments; render();
+    $("s2").textContent = "Đã dịch. Bạn có thể chỉnh sửa trước khi tạo giọng.";
+    $("bTts").disabled = false; $("bSrt").disabled = false;
+  } catch (e) { $("s2").textContent = "Lỗi: " + e.message; }
+  $("bTr").disabled = false;
+};
+
+const ts = t => {
+  const ms = Math.round(t * 1000), p = (n, l = 2) => String(n).padStart(l, "0");
+  return `${p(Math.floor(ms / 3600000))}:${p(Math.floor(ms / 60000) % 60)}:${p(Math.floor(ms / 1000) % 60)},${p(ms % 1000, 3)}`;
+};
+$("bSrt").onclick = () => {
+  const srt = segs.map((s, i) => `${i + 1}\n${ts(s.start)} --> ${ts(s.end)}\n${s.vi}\n`).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([srt], { type: "text/plain" }));
+  a.download = "phu-de-vi.srt"; a.click();
+};
+
+$("bTts").onclick = async () => {
+  $("bTts").disabled = true; $("s3").textContent = "Đang tạo giọng nói và ghép video...";
+  try {
+    const r = await post("/api/tts", { job, segments: segs, voice: $("voice").value });
+    $("aud").src = r.audio; $("aud").hidden = false;
+    $("dub").src = r.video; $("dub").hidden = false;
+    $("s3").textContent = "Hoàn tất. Chuột phải vào video/audio để tải về.";
+  } catch (e) { $("s3").textContent = "Lỗi: " + e.message; }
+  $("bTts").disabled = false;
+};
+</script>
+</body>
+</html>
